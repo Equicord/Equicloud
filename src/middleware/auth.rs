@@ -1,64 +1,48 @@
-use anyhow::Result;
 use axum::{extract::Request, http::StatusCode, middleware::Next, response::Response};
 use base64::prelude::*;
-use tracing::{error, info, warn};
+use tracing::warn;
+
+#[inline]
+fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    a.iter()
+        .zip(b.iter())
+        .fold(0u8, |acc, (x, y)| acc | (x ^ y))
+        == 0
+}
 
 pub async fn auth_middleware(mut request: Request, next: Next) -> Result<Response, StatusCode> {
-    let headers = request.headers();
-    let auth_header = headers
+    let auth_header = request
+        .headers()
         .get("authorization")
         .and_then(|h| h.to_str().ok())
-        .ok_or_else(|| {
-            error!("No authorization header found");
-            StatusCode::UNAUTHORIZED
-        })?;
+        .ok_or(StatusCode::UNAUTHORIZED)?;
 
     let token = auth_header.strip_prefix("Bearer ").unwrap_or(auth_header);
 
-    match verify_token(token).await {
-        Ok(user_id) => {
-            info!("Successfully authenticated user: {}", user_id);
-            request.extensions_mut().insert(user_id);
-            Ok(next.run(request).await)
-        }
-        Err(e) => {
-            error!("Token verification failed: {}", e);
-            Err(StatusCode::UNAUTHORIZED)
-        }
-    }
+    let user_id = verify_token(token).ok_or(StatusCode::UNAUTHORIZED)?;
+    request.extensions_mut().insert(user_id);
+    Ok(next.run(request).await)
 }
 
-async fn verify_token(token: &str) -> Result<String> {
-    let decoded = BASE64_STANDARD
-        .decode(token)
-        .map_err(|e| anyhow::anyhow!("Invalid base64 token: {}", e))?;
-
-    let token_str =
-        String::from_utf8(decoded).map_err(|e| anyhow::anyhow!("Invalid UTF-8 in token: {}", e))?;
-
-    let parts: Vec<&str> = token_str.split(':').collect();
-    if parts.len() != 2 {
-        return Err(anyhow::anyhow!(
-            "Invalid token format, expected 'secret:userId', got {} parts",
-            parts.len()
-        ));
-    }
-
-    let (provided_secret, discord_user_id) = (parts[0], parts[1]);
+#[inline]
+fn verify_token(token: &str) -> Option<String> {
+    let decoded = BASE64_STANDARD.decode(token).ok()?;
+    let token_str = String::from_utf8(decoded).ok()?;
+    let (provided_secret, discord_user_id) = token_str.split_once(':')?;
 
     let expected_secret = equicloud::utils::get_user_secret(discord_user_id);
-    if provided_secret == expected_secret {
-        return Ok(discord_user_id.to_string());
+    if constant_time_eq(provided_secret.as_bytes(), expected_secret.as_bytes()) {
+        return Some(discord_user_id.to_string());
     }
 
     let legacy_secret = equicloud::hash_migration::legacy::get_user_secret(discord_user_id);
-    if provided_secret == legacy_secret {
-        warn!(
-            "User {} authenticated with legacy secret format, they should re-authenticate to get new secret",
-            discord_user_id
-        );
-        return Ok(discord_user_id.to_string());
+    if constant_time_eq(provided_secret.as_bytes(), legacy_secret.as_bytes()) {
+        warn!("User authenticated with legacy secret format");
+        return Some(discord_user_id.to_string());
     }
 
-    Err(anyhow::anyhow!("Invalid secret for user"))
+    None
 }

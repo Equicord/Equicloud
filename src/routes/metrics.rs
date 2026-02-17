@@ -19,7 +19,7 @@ pub fn register() -> Router {
     START_TIME.get_or_init(|| {
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .expect("system time before UNIX epoch")
             .as_secs()
     });
 
@@ -77,10 +77,10 @@ async fn get_user_counts(db: &DatabaseService) -> Result<UserCounts, anyhow::Err
     let week_ago = now - MS_PER_WEEK;
     let month_ago = now - MS_PER_MONTH;
 
-    let total = query_user_count(db, "SELECT COUNT(*) FROM users", &[]).await?;
-    let day = query_user_count_with_filter(db, day_ago, "last day").await?;
-    let week = query_user_count_with_filter(db, week_ago, "last week").await?;
-    let month = query_user_count_with_filter(db, month_ago, "last month").await?;
+    let total = query_total_count(db).await?;
+    let day = query_count_since(db, day_ago).await?;
+    let week = query_count_since(db, week_ago).await?;
+    let month = query_count_since(db, month_ago).await?;
 
     Ok(UserCounts {
         total,
@@ -90,16 +90,11 @@ async fn get_user_counts(db: &DatabaseService) -> Result<UserCounts, anyhow::Err
     })
 }
 
-async fn query_user_count(
-    db: &DatabaseService,
-    query: &str,
-    params: &[i64],
-) -> Result<u64, anyhow::Error> {
+async fn query_total_count(db: &DatabaseService) -> Result<u64, anyhow::Error> {
     let result = db
         .session()
-        .query_unpaged(query, params)
-        .await
-        .map_err(|e| anyhow::anyhow!("Failed to query users: {}", e))?;
+        .query_unpaged("SELECT COUNT(*) FROM users", &[])
+        .await?;
 
     let count = result
         .into_rows_result()?
@@ -112,17 +107,16 @@ async fn query_user_count(
     Ok(count)
 }
 
-async fn query_user_count_with_filter(
-    db: &DatabaseService,
-    timestamp: i64,
-    period: &str,
-) -> Result<u64, anyhow::Error> {
-    let query = "SELECT COUNT(*) FROM users WHERE created_at > ?";
-    let count = db
+async fn query_count_since(db: &DatabaseService, timestamp: i64) -> Result<u64, anyhow::Error> {
+    let result = db
         .session()
-        .query_unpaged(query, (timestamp,))
-        .await
-        .map_err(|e| anyhow::anyhow!("Failed to query users in {}: {}", period, e))?
+        .query_unpaged(
+            "SELECT COUNT(*) FROM users WHERE updated_at > ?",
+            (timestamp,),
+        )
+        .await?;
+
+    let count = result
         .into_rows_result()?
         .rows::<(i64,)>()?
         .next()

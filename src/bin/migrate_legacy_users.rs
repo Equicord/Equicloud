@@ -27,8 +27,9 @@ async fn main() {
         .init();
 
     let args: Vec<String> = env::args().collect();
-    let dry_run = !args.contains(&"--delete-legacy".to_string());
-    let delete_legacy = args.contains(&"--delete-legacy".to_string());
+    let delete_flag = "--delete-legacy".to_string();
+    let delete_legacy = args.contains(&delete_flag);
+    let dry_run = !delete_legacy;
 
     if dry_run {
         info!("Running in DRY-RUN mode - no data will be deleted");

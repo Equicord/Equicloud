@@ -3,7 +3,7 @@ use axum::{
     response::{IntoResponse, Json, Redirect, Response},
     routing::get,
 };
-use serde_json::{Value, json};
+use serde_json::json;
 use std::env;
 use tracing::debug;
 
@@ -13,12 +13,8 @@ pub fn register() -> Router {
         .route("/", get(root_redirect))
 }
 
-async fn health_check() -> Json<Value> {
-    Json(json!({
-        "status": "ok",
-        "timestamp": chrono::Utc::now().timestamp(),
-        "service": "equicloud"
-    }))
+async fn health_check() -> &'static str {
+    r#"{"status":"ok"}"#
 }
 
 async fn root_redirect() -> Response {
@@ -35,12 +31,15 @@ async fn root_redirect() -> Response {
 
     Json(json!({
         "message": "EquiCloud",
-        "version": "1.0.0",
+        "version": "2.0.0",
         "endpoints": [
             "/health",
             "/v1/oauth/callback",
             "/v1/oauth/settings",
-            "/v1/settings"
+            "/v1/settings",
+            "/v2/manifest",
+            "/v2/data/{key}",
+            "/v2/sync"
         ]
     }))
     .into_response()

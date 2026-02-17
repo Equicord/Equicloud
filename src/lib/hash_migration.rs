@@ -36,7 +36,9 @@ pub mod sha256 {
 
 pub fn is_legacy_key(key: &str) -> bool {
     if let Some(hash_part) = key.strip_prefix("settings:") {
-        hash_part.len() <= 10 && hash_part.chars().all(|c| c.is_ascii_digit())
+        !hash_part.is_empty()
+            && hash_part.len() <= 10
+            && hash_part.chars().all(|c| c.is_ascii_digit())
     } else {
         false
     }
