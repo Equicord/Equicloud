@@ -1,83 +1,13 @@
 use axum::{Extension, Json, http::StatusCode, response::IntoResponse};
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use tracing::error;
 
+use equicloud::types::sync::{
+    ClientManifestEntry, DownloadEntry, SyncError, SyncRequest, SyncResponse, UploadResult,
+};
+use equicloud::types::DataManifestEntry;
 use equicloud::utils::CONFIG;
-use equicloud::{DataManifestEntry, DatabaseService, compute_checksum, validate_key};
-
-#[derive(Deserialize)]
-pub struct SyncRequest {
-    client_manifest: Vec<ClientManifestEntry>,
-    #[serde(default)]
-    uploads: Vec<UploadEntry>,
-}
-
-#[derive(Deserialize)]
-pub struct ClientManifestEntry {
-    key: String,
-    version: i64,
-    checksum: String,
-}
-
-#[derive(Deserialize)]
-pub struct UploadEntry {
-    key: String,
-    #[serde(with = "base64_serde")]
-    value: Vec<u8>,
-    #[serde(default)]
-    checksum: Option<String>,
-}
-
-mod base64_serde {
-    use base64::prelude::*;
-    use serde::{Deserialize, Deserializer, Serializer};
-
-    pub fn deserialize<'de, D>(deserializer: D) -> Result<Vec<u8>, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let s = String::deserialize(deserializer)?;
-        BASE64_STANDARD.decode(&s).map_err(serde::de::Error::custom)
-    }
-
-    pub fn serialize<S>(bytes: &Vec<u8>, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        serializer.serialize_str(&BASE64_STANDARD.encode(bytes))
-    }
-}
-
-#[derive(Serialize)]
-pub struct SyncResponse {
-    server_manifest: Vec<DataManifestEntry>,
-    downloads: Vec<DownloadEntry>,
-    uploaded: Vec<UploadResult>,
-    errors: Vec<SyncError>,
-}
-
-#[derive(Serialize)]
-pub struct DownloadEntry {
-    key: String,
-    #[serde(with = "base64_serde")]
-    value: Vec<u8>,
-    version: i64,
-    checksum: String,
-}
-
-#[derive(Serialize)]
-pub struct UploadResult {
-    key: String,
-    version: i64,
-    checksum: String,
-}
-
-#[derive(Serialize)]
-pub struct SyncError {
-    key: String,
-    error: String,
-}
+use equicloud::{DatabaseService, compute_checksum, validate_key};
 
 pub async fn delta_sync(
     Extension(db): Extension<DatabaseService>,

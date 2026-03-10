@@ -14,11 +14,13 @@ pub mod constants;
 pub mod database;
 pub mod hash_migration;
 pub mod migrations;
+pub mod types;
 pub mod utils;
 
-pub use database::{DataEntry, DataManifestEntry, DatabaseService};
+pub use database::DatabaseService;
 pub use migrations::MigrationRunner;
-pub use utils::{KeyValidationError, compress, compute_checksum, decompress, validate_key};
+pub use types::{DataEntry, DataManifestEntry, KeyValidationError};
+pub use utils::{compress, compute_checksum, decompress, validate_key};
 
 pub async fn create_database_connection() -> Result<Session> {
     let uri = env::var("SCYLLA_URI").unwrap_or_else(|_| constants::DEFAULT_SCYLLA_URI.to_string());

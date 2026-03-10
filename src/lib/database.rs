@@ -1,32 +1,12 @@
 use crate::hash_migration::legacy;
+use crate::types::{DataEntry, DataManifestEntry};
 use crate::utils::{CONFIG, compress, decompress, hash_user_id, validate_key};
 use anyhow::Result;
 use futures::{future::join_all, join};
 use scylla::client::session::Session;
 use scylla::statement::prepared::PreparedStatement;
-use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tracing::{info, warn};
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DataEntry {
-    pub key: String,
-    pub value: Vec<u8>,
-    pub version: i64,
-    pub checksum: String,
-    pub size_bytes: i32,
-    pub created_at: i64,
-    pub updated_at: i64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DataManifestEntry {
-    pub key: String,
-    pub version: i64,
-    pub checksum: String,
-    pub size_bytes: i32,
-    pub updated_at: i64,
-}
 
 fn check_key(key: &str) -> Result<()> {
     validate_key(key).map_err(|e| anyhow::anyhow!(e.message()))

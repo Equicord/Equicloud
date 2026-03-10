@@ -1,15 +1,9 @@
 use axum::{Extension, Json, http::StatusCode, response::IntoResponse};
-use serde::Serialize;
 use tracing::error;
 
+use equicloud::types::{DataManifestEntry, ManifestResponse};
 use equicloud::utils::CONFIG;
-use equicloud::{DataManifestEntry, DatabaseService};
-
-#[derive(Serialize)]
-pub struct ManifestResponse {
-    entries: Vec<DataManifestEntry>,
-    total_size: i64,
-}
+use equicloud::DatabaseService;
 
 pub async fn get_manifest(
     Extension(db): Extension<DatabaseService>,

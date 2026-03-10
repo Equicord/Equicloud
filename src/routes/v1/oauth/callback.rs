@@ -1,27 +1,11 @@
 use axum::{extract::Query, response::Json};
 use reqwest;
-use serde::Deserialize;
 use serde_json::{Value, json};
 use tracing::{error, info};
 
 use equicloud::constants::{DISCORD_TOKEN_URL, DISCORD_USER_URL};
+use equicloud::types::oauth::{DiscordAccessTokenResult, DiscordUserResult, OAuthCallback};
 use equicloud::utils::{CONFIG, error_response, get_user_secret, hash_user_id};
-
-#[derive(Deserialize)]
-pub struct OAuthCallback {
-    pub code: Option<String>,
-    pub error: Option<String>,
-}
-
-#[derive(Deserialize)]
-struct DiscordAccessTokenResult {
-    access_token: String,
-}
-
-#[derive(Deserialize)]
-struct DiscordUserResult {
-    id: String,
-}
 
 pub async fn oauth_callback(Query(params): Query<OAuthCallback>) -> Json<Value> {
     if let Some(error) = params.error {
