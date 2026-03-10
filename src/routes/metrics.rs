@@ -111,7 +111,7 @@ async fn query_count_since(db: &DatabaseService, timestamp: i64) -> Result<u64, 
     let result = db
         .session()
         .query_unpaged(
-            "SELECT COUNT(*) FROM users WHERE updated_at > ?",
+            "SELECT COUNT(*) FROM users WHERE updated_at > ? ALLOW FILTERING",
             (timestamp,),
         )
         .await?;
