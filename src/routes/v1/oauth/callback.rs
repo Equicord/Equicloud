@@ -64,6 +64,9 @@ pub async fn oauth_callback(Query(params): Query<OAuthCallback>) -> Json<Value> 
     };
 
     if !token_response.status().is_success() {
+        let status = token_response.status();
+        let body = token_response.text().await.unwrap_or_default();
+        error!("Discord token exchange failed ({}): {}", status, body);
         return Json(error_response("Invalid code"));
     }
 
@@ -93,6 +96,9 @@ pub async fn oauth_callback(Query(params): Query<OAuthCallback>) -> Json<Value> 
     };
 
     if !user_response.status().is_success() {
+        let status = user_response.status();
+        let body = user_response.text().await.unwrap_or_default();
+        error!("Discord user request failed ({}): {}", status, body);
         return Json(error_response("Failed to request user"));
     }
 

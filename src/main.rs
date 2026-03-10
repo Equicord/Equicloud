@@ -72,8 +72,8 @@ fn configure_cors() -> CorsLayer {
     }
 }
 
-fn configure_rate_limiter_peer() -> GovernorLayer<PeerIpKeyExtractor, NoOpMiddleware, axum::body::Body>
-{
+fn configure_rate_limiter_peer()
+-> GovernorLayer<PeerIpKeyExtractor, NoOpMiddleware, axum::body::Body> {
     let (per_second, burst_size) = rate_limit_params();
 
     let config = GovernorConfigBuilder::default()
@@ -85,8 +85,8 @@ fn configure_rate_limiter_peer() -> GovernorLayer<PeerIpKeyExtractor, NoOpMiddle
     GovernorLayer::new(config)
 }
 
-fn configure_rate_limiter_proxy(
-) -> GovernorLayer<SmartIpKeyExtractor, NoOpMiddleware, axum::body::Body> {
+fn configure_rate_limiter_proxy()
+-> GovernorLayer<SmartIpKeyExtractor, NoOpMiddleware, axum::body::Body> {
     let (per_second, burst_size) = rate_limit_params();
 
     let config = GovernorConfigBuilder::default()

@@ -8,12 +8,21 @@ use serde_json::json;
 use std::env;
 use std::sync::OnceLock;
 use std::time::{SystemTime, UNIX_EPOCH};
+use tokio::sync::Mutex;
 use tracing::error;
 
 use equicloud::DatabaseService;
 use equicloud::constants::{MS_PER_DAY, MS_PER_MONTH, MS_PER_WEEK};
 
+const CACHE_TTL_SECS: u64 = 300;
+
 static START_TIME: OnceLock<u64> = OnceLock::new();
+static CACHED_COUNTS: OnceLock<Mutex<CachedUserCounts>> = OnceLock::new();
+
+struct CachedUserCounts {
+    counts: UserCounts,
+    fetched_at: u64,
+}
 
 pub fn register() -> Router {
     START_TIME.get_or_init(|| {
@@ -21,6 +30,13 @@ pub fn register() -> Router {
             .duration_since(UNIX_EPOCH)
             .expect("system time before UNIX epoch")
             .as_secs()
+    });
+
+    CACHED_COUNTS.get_or_init(|| {
+        Mutex::new(CachedUserCounts {
+            counts: UserCounts::default(),
+            fetched_at: 0,
+        })
     });
 
     Router::new().route("/metrics", get(get_metrics))
@@ -44,13 +60,7 @@ async fn get_metrics(Extension(db): Extension<DatabaseService>) -> impl IntoResp
     let start_time = *START_TIME.get().unwrap_or(&0);
     let uptime = now - start_time;
 
-    let user_counts = match get_user_counts(&db).await {
-        Ok(counts) => counts,
-        Err(e) => {
-            error!("Failed to get user counts for metrics: {}", e);
-            UserCounts::default()
-        }
-    };
+    let user_counts = get_cached_user_counts(&db, now).await;
 
     Json(json!({
         "users_day": user_counts.day,
@@ -63,12 +73,33 @@ async fn get_metrics(Extension(db): Extension<DatabaseService>) -> impl IntoResp
     .into_response()
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 struct UserCounts {
     total: u64,
     week: u64,
     month: u64,
     day: u64,
+}
+
+async fn get_cached_user_counts(db: &DatabaseService, now: u64) -> UserCounts {
+    let cache = CACHED_COUNTS.get().unwrap();
+    let mut cached = cache.lock().await;
+
+    if now - cached.fetched_at < CACHE_TTL_SECS {
+        return cached.counts.clone();
+    }
+
+    match get_user_counts(db).await {
+        Ok(counts) => {
+            cached.counts = counts.clone();
+            cached.fetched_at = now;
+            counts
+        }
+        Err(e) => {
+            error!("Failed to get user counts for metrics: {}", e);
+            cached.counts.clone()
+        }
+    }
 }
 
 async fn get_user_counts(db: &DatabaseService) -> Result<UserCounts, anyhow::Error> {
