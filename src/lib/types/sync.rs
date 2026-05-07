@@ -12,7 +12,6 @@ pub struct SyncRequest {
 }
 
 #[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct ClientManifestEntry {
     pub key: String,
     pub version: i64,

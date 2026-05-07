@@ -191,13 +191,13 @@ pub async fn delta_sync(
             let dominated_by_server = server_map.get(upload.key.as_str()).is_some_and(|s| {
                 client_map
                     .get(upload.key.as_str())
-                    .is_none_or(|c| c.version <= s.version)
+                    .is_none_or(|c| c.version < s.version)
             });
 
             if dominated_by_server {
                 errors.push(sync_error(
                     upload.key,
-                    "Server has equal or newer version; pull before pushing",
+                    "Server has newer version; pull before pushing",
                 ));
                 continue;
             }
