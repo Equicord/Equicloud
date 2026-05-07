@@ -3,6 +3,7 @@ services:
     image: ghcr.io/equicord/equicloud:latest
     ports:
       - "9000:9000"
+    # Copy .env.example to .env first; compose will fail to start if .env is missing.
     env_file:
       - .env
     depends_on:
@@ -13,7 +14,6 @@ services:
   scylla:
     image: scylladb/scylla:2025.3.1
     restart: unless-stopped
-    user: "0:0"
     volumes:
       - ./scylla_data:/var/lib/scylla
     command: [
@@ -27,7 +27,3 @@ services:
       interval: 20s
       timeout: 10s
       retries: 5
-
-
-volumes:
-  scylla_data:

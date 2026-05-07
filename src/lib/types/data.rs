@@ -1,6 +1,6 @@
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct DataEntry {
     pub key: String,
     pub value: Vec<u8>,
@@ -11,7 +11,7 @@ pub struct DataEntry {
     pub updated_at: i64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct DataManifestEntry {
     pub key: String,
     pub version: i64,

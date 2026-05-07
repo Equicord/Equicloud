@@ -6,6 +6,7 @@ pub const DEFAULT_MAX_BACKUP_SIZE: usize = 62_914_560; // 60 MB
 
 pub const DISCORD_TOKEN_URL: &str = "https://discord.com/api/oauth2/token";
 pub const DISCORD_USER_URL: &str = "https://discord.com/api/users/@me";
+pub const DISCORD_TOKEN_REVOKE_URL: &str = "https://discord.com/api/oauth2/token/revoke";
 
 pub const MS_PER_DAY: i64 = 24 * 60 * 60 * 1000;
 pub const MS_PER_WEEK: i64 = 7 * MS_PER_DAY;
@@ -23,3 +24,6 @@ pub const CHECKSUM_BYTES: usize = 8;
 pub const DEFAULT_COMPRESSION_ENABLED: bool = true;
 
 pub const MAX_DECOMPRESSION_SIZE: usize = 10_485_760; // 10 MB
+
+pub const DEFAULT_MAX_SYNC_UPLOADS: usize = 100_000;
+pub const DEFAULT_MAX_SYNC_MANIFEST_ENTRIES: usize = 1_000_000;

@@ -1,7 +1,7 @@
 use axum::{
     Extension,
     body::{Body, Bytes},
-    http::{HeaderMap, StatusCode},
+    http::{HeaderMap, HeaderValue, StatusCode},
     response::IntoResponse,
 };
 use serde_json::json;
@@ -10,18 +10,60 @@ use tracing::error;
 use equicloud::DatabaseService;
 use equicloud::utils::{CONFIG, error_response};
 
+const OCTET_STREAM: HeaderValue = HeaderValue::from_static("application/octet-stream");
+
+fn etag_header_value(written: &str) -> Option<HeaderValue> {
+    HeaderValue::from_str(written).ok()
+}
+
+fn content_type_is_octet_stream(headers: &HeaderMap) -> bool {
+    headers
+        .get("content-type")
+        .and_then(|h| h.to_str().ok())
+        .map(|s| {
+            let primary = s.split(';').next().unwrap_or("").trim();
+            primary.eq_ignore_ascii_case("application/octet-stream")
+        })
+        .unwrap_or(false)
+}
+
+fn etag_matches(header_value: Option<&str>, written: &str) -> bool {
+    let Some(raw) = header_value else {
+        return false;
+    };
+    raw.split(',').any(|tag| {
+        let t = tag.trim();
+        t == "*" || t == written
+    })
+}
+
+fn if_none_match_matches(headers: &HeaderMap, written: &str) -> bool {
+    etag_matches(
+        headers.get("if-none-match").and_then(|h| h.to_str().ok()),
+        written,
+    )
+}
+
+fn if_match_matches(headers: &HeaderMap, written: &str) -> bool {
+    etag_matches(
+        headers.get("if-match").and_then(|h| h.to_str().ok()),
+        written,
+    )
+}
+
 pub async fn head_settings(
     Extension(db): Extension<DatabaseService>,
     Extension(user_id): Extension<String>,
-    _headers: HeaderMap,
+    headers: HeaderMap,
 ) -> impl IntoResponse {
     match db.get_settings_metadata(&user_id).await {
         Ok(Some(written)) => {
+            if if_none_match_matches(&headers, &written) {
+                return (StatusCode::NOT_MODIFIED, HeaderMap::new());
+            }
             let mut response_headers = HeaderMap::new();
-            if let Ok(etag_value) = written.parse() {
-                response_headers.insert("ETag", etag_value);
-            } else {
-                error!("Failed to parse ETag value: {}", written);
+            if let Some(v) = etag_header_value(&written) {
+                response_headers.insert("ETag", v);
             }
             (StatusCode::NO_CONTENT, response_headers)
         }
@@ -38,24 +80,38 @@ pub async fn get_settings(
     Extension(user_id): Extension<String>,
     headers: HeaderMap,
 ) -> impl IntoResponse {
+    let metadata = match db.get_settings_metadata(&user_id).await {
+        Ok(m) => m,
+        Err(e) => {
+            error!("Database error in get_settings (metadata): {}", e);
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                axum::Json(error_response("Failed to retrieve settings")),
+            )
+                .into_response();
+        }
+    };
+
+    let written = match metadata {
+        Some(w) => w,
+        None => return (StatusCode::NOT_FOUND, HeaderMap::new(), Body::empty()).into_response(),
+    };
+
+    if if_none_match_matches(&headers, &written) {
+        let mut response_headers = HeaderMap::new();
+        if let Some(v) = etag_header_value(&written) {
+            response_headers.insert("ETag", v);
+        }
+        return (StatusCode::NOT_MODIFIED, response_headers, Body::empty()).into_response();
+    }
+
     match db.get_user_settings(&user_id).await {
         Ok(Some((value, written))) => {
-            if let Some(if_none_match) = headers.get("if-none-match")
-                && if_none_match.to_str().unwrap_or("") == written
-            {
-                return (StatusCode::NOT_MODIFIED, HeaderMap::new(), Body::empty()).into_response();
-            }
-
             let mut response_headers = HeaderMap::new();
-            if let Ok(content_type) = "application/octet-stream".parse() {
-                response_headers.insert("Content-Type", content_type);
+            response_headers.insert("Content-Type", OCTET_STREAM);
+            if let Some(v) = etag_header_value(&written) {
+                response_headers.insert("ETag", v);
             }
-            if let Ok(etag_value) = written.parse() {
-                response_headers.insert("ETag", etag_value);
-            } else {
-                error!("Failed to parse ETag value: {}", written);
-            }
-
             (StatusCode::OK, response_headers, Body::from(value)).into_response()
         }
         Ok(None) => (StatusCode::NOT_FOUND, HeaderMap::new(), Body::empty()).into_response(),
@@ -76,8 +132,7 @@ pub async fn put_settings(
     headers: HeaderMap,
     body: Bytes,
 ) -> impl IntoResponse {
-    if headers.get("content-type").and_then(|h| h.to_str().ok()) != Some("application/octet-stream")
-    {
+    if !content_type_is_octet_stream(&headers) {
         return (
             StatusCode::UNSUPPORTED_MEDIA_TYPE,
             axum::Json(error_response(
@@ -97,14 +152,51 @@ pub async fn put_settings(
             .into_response();
     }
 
+    if headers.contains_key("if-match") {
+        let current = match db.get_settings_metadata(&user_id).await {
+            Ok(c) => c,
+            Err(e) => {
+                error!("Database error reading metadata for If-Match: {}", e);
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    axum::Json(error_response("Failed to read current settings")),
+                )
+                    .into_response();
+            }
+        };
+        match current {
+            Some(current) if if_match_matches(&headers, &current) => {}
+            Some(_) => {
+                return (
+                    StatusCode::PRECONDITION_FAILED,
+                    axum::Json(error_response("Settings have changed since last read")),
+                )
+                    .into_response();
+            }
+            None => {
+                return (
+                    StatusCode::PRECONDITION_FAILED,
+                    axum::Json(error_response("No existing settings to match against")),
+                )
+                    .into_response();
+            }
+        }
+    }
+
     match db.save_user_settings(&user_id, body.to_vec()).await {
-        Ok(written) => (
-            StatusCode::OK,
-            axum::Json(json!({
-                "written": written
-            })),
-        )
-            .into_response(),
+        Ok(written) => {
+            let mut response_headers = HeaderMap::new();
+            let mut buf = itoa::Buffer::new();
+            if let Some(v) = etag_header_value(buf.format(written)) {
+                response_headers.insert("ETag", v);
+            }
+            (
+                StatusCode::OK,
+                response_headers,
+                axum::Json(json!({ "written": written })),
+            )
+                .into_response()
+        }
         Err(e) => {
             error!("Database error in put_settings: {}", e);
             (
@@ -121,10 +213,14 @@ pub async fn delete_settings(
     Extension(user_id): Extension<String>,
 ) -> impl IntoResponse {
     match db.delete_user_settings(&user_id).await {
-        Ok(_) => StatusCode::NO_CONTENT,
+        Ok(_) => (StatusCode::NO_CONTENT, HeaderMap::new()).into_response(),
         Err(e) => {
             error!("Database error in delete_settings: {}", e);
-            StatusCode::INTERNAL_SERVER_ERROR
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                axum::Json(error_response("Failed to delete settings")),
+            )
+                .into_response()
         }
     }
 }

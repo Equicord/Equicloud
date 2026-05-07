@@ -3,13 +3,16 @@ use serde::{Deserialize, Serialize};
 use super::data::DataManifestEntry;
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct SyncRequest {
+    #[serde(default)]
     pub client_manifest: Vec<ClientManifestEntry>,
     #[serde(default)]
     pub uploads: Vec<UploadEntry>,
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ClientManifestEntry {
     pub key: String,
     pub version: i64,
@@ -17,6 +20,7 @@ pub struct ClientManifestEntry {
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct UploadEntry {
     pub key: String,
     #[serde(with = "base64_serde")]
@@ -72,5 +76,5 @@ pub struct UploadResult {
 #[derive(Serialize)]
 pub struct SyncError {
     pub key: String,
-    pub error: String,
+    pub error: std::borrow::Cow<'static, str>,
 }

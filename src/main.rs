@@ -20,6 +20,9 @@ use tower_http::limit::RequestBodyLimitLayer;
 use tower_http::set_header::SetResponseHeaderLayer;
 use tracing::{error, info, warn};
 
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 mod middleware;
 mod routes;
 
@@ -31,7 +34,9 @@ fn configure_cors() -> CorsLayer {
 
     match origins.as_deref() {
         Some("*") => {
-            warn!("CORS configured for all origins - use specific origins in production!");
+            warn!(
+                "CORS_ALLOWED_ORIGINS=*; allowing all origins. This is unsafe for production deployments."
+            );
             CorsLayer::permissive()
         }
         Some(origins_str) => {
@@ -59,6 +64,7 @@ fn configure_cors() -> CorsLayer {
                         CONTENT_TYPE,
                         HeaderName::from_static("authorization"),
                         HeaderName::from_static("if-none-match"),
+                        HeaderName::from_static("if-match"),
                     ])
                     .expose_headers([
                         HeaderName::from_static("etag"),
@@ -67,53 +73,63 @@ fn configure_cors() -> CorsLayer {
             }
         }
         None => {
-            warn!("CORS_ALLOWED_ORIGINS not set - defaulting to permissive for development");
-            CorsLayer::permissive()
+            warn!(
+                "CORS_ALLOWED_ORIGINS is not set; cross-origin requests will be rejected. \
+                 Set to a comma-separated origin list, or `*` for development only."
+            );
+            CorsLayer::new()
         }
     }
 }
 
-fn configure_rate_limiter_peer()
--> GovernorLayer<PeerIpKeyExtractor, NoOpMiddleware, axum::body::Body> {
+fn build_rate_limiter_peer_config()
+-> tower_governor::governor::GovernorConfig<PeerIpKeyExtractor, NoOpMiddleware> {
     let (per_second, burst_size) = rate_limit_params();
-
-    let config = GovernorConfigBuilder::default()
+    GovernorConfigBuilder::default()
         .per_second(per_second)
         .burst_size(burst_size)
         .finish()
-        .expect("Failed to build rate limiter config");
-
-    GovernorLayer::new(config)
+        .expect("Failed to build rate limiter config")
 }
 
-fn configure_rate_limiter_proxy()
--> GovernorLayer<SmartIpKeyExtractor, NoOpMiddleware, axum::body::Body> {
+fn build_rate_limiter_proxy_config()
+-> tower_governor::governor::GovernorConfig<SmartIpKeyExtractor, NoOpMiddleware> {
     let (per_second, burst_size) = rate_limit_params();
-
-    let config = GovernorConfigBuilder::default()
+    GovernorConfigBuilder::default()
         .per_second(per_second)
         .burst_size(burst_size)
         .key_extractor(SmartIpKeyExtractor)
         .finish()
-        .expect("Failed to build rate limiter config");
-
-    GovernorLayer::new(config)
+        .expect("Failed to build rate limiter config")
 }
 
 fn rate_limit_params() -> (u64, u32) {
-    let per_second = env::var("RATE_LIMIT_PER_SECOND")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(50u64);
-
-    let burst_size = env::var("RATE_LIMIT_BURST")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(150u32);
+    let per_second: u64 = parse_env("RATE_LIMIT_PER_SECOND", 50);
+    let burst_size: u32 = parse_env("RATE_LIMIT_BURST", 150);
 
     info!("Rate limiting: {} req/s, burst: {}", per_second, burst_size);
 
     (per_second, burst_size)
+}
+
+fn parse_env<T>(name: &str, default: T) -> T
+where
+    T: std::str::FromStr,
+    T::Err: std::fmt::Display,
+{
+    match env::var(name) {
+        Ok(v) if !v.is_empty() => match v.parse() {
+            Ok(parsed) => parsed,
+            Err(e) => {
+                error!(
+                    "Invalid value for {}={:?}: {}; falling back to default",
+                    name, v, e
+                );
+                default
+            }
+        },
+        _ => default,
+    }
 }
 
 fn security_headers_layer() -> SecurityHeaderLayer {
@@ -191,55 +207,102 @@ async fn main() {
     let server_port = env::var("SERVER_PORT").unwrap_or_else(|_| DEFAULT_PORT.to_string());
     let bind_address = format!("{}:{}", server_host, server_port);
 
-    let rate_limit_enabled = env::var("RATE_LIMIT_ENABLED")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(true);
-
-    let trust_proxy_headers = env::var("TRUST_PROXY_HEADERS")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(false);
+    let rate_limit_enabled: bool = parse_env("RATE_LIMIT_ENABLED", true);
+    let trust_proxy_headers: bool = parse_env("TRUST_PROXY_HEADERS", false);
 
     let cors = configure_cors();
 
-    let max_body_size = CONFIG.max_backup_size_bytes + 4096;
+    let max_body_size = CONFIG.max_backup_size_bytes.saturating_add(4096);
 
     let internal_routes = Router::new()
         .merge(routes::health::register())
         .merge(routes::metrics::register())
-        .layer(axum::extract::Extension(db_service.clone()));
+        .layer(axum::extract::Extension(db_service.clone()))
+        // Read-only routes — tight 8 KiB body cap, can never legitimately have a body.
+        .layer(DefaultBodyLimit::max(8 * 1024));
 
     let api_routes = Router::new()
         .merge(routes::v1::register())
         .merge(routes::v2::register())
-        .layer(axum::extract::Extension(db_service.clone()));
+        .layer(axum::extract::Extension(db_service.clone()))
+        // Bulk-upload routes (PUT settings, PUT data, POST sync) need the
+        // configured backup size + a small slack for headers/JSON wrapping.
+        .layer(DefaultBodyLimit::disable())
+        .layer(RequestBodyLimitLayer::new(max_body_size));
 
-    let api_routes = match (rate_limit_enabled, trust_proxy_headers) {
+    enum LimiterCleanup {
+        Peer(
+            std::sync::Arc<
+                governor::RateLimiter<
+                    std::net::IpAddr,
+                    governor::state::keyed::DashMapStateStore<std::net::IpAddr>,
+                    governor::clock::QuantaClock,
+                    NoOpMiddleware,
+                >,
+            >,
+        ),
+        Proxy(
+            std::sync::Arc<
+                governor::RateLimiter<
+                    std::net::IpAddr,
+                    governor::state::keyed::DashMapStateStore<std::net::IpAddr>,
+                    governor::clock::QuantaClock,
+                    NoOpMiddleware,
+                >,
+            >,
+        ),
+        None,
+    }
+
+    let (api_routes, cleanup) = match (rate_limit_enabled, trust_proxy_headers) {
         (true, true) => {
             info!("Rate limiting enabled (trusting proxy headers)");
-            api_routes.layer(configure_rate_limiter_proxy())
+            let cfg = build_rate_limiter_proxy_config();
+            let limiter = cfg.limiter().clone();
+            (
+                api_routes.layer(GovernorLayer::new(cfg)),
+                LimiterCleanup::Proxy(limiter),
+            )
         }
         (true, false) => {
             info!("Rate limiting enabled (using peer IP)");
-            api_routes.layer(configure_rate_limiter_peer())
+            let cfg = build_rate_limiter_peer_config();
+            let limiter = cfg.limiter().clone();
+            (
+                api_routes.layer(GovernorLayer::new(cfg)),
+                LimiterCleanup::Peer(limiter),
+            )
         }
         (false, _) => {
             warn!("Rate limiting disabled");
-            api_routes
+            (api_routes, LimiterCleanup::None)
         }
     };
+
+    // Periodically prune the governor's per-IP map to prevent unbounded growth.
+    match cleanup {
+        LimiterCleanup::Peer(limiter) | LimiterCleanup::Proxy(limiter) => {
+            tokio::spawn(async move {
+                let mut interval = tokio::time::interval(Duration::from_secs(60));
+                interval.tick().await; // skip the immediate first tick
+                loop {
+                    interval.tick().await;
+                    limiter.retain_recent();
+                }
+            });
+        }
+        LimiterCleanup::None => {}
+    }
 
     let app = Router::new()
         .merge(internal_routes)
         .merge(api_routes)
+        // Outermost: response-shape headers, applied to every response.
         .layer(cors)
         .layer(security_headers_layer())
         .layer(frame_options_layer())
         .layer(cache_control_layer())
-        .layer(referrer_policy_layer())
-        .layer(DefaultBodyLimit::disable())
-        .layer(RequestBodyLimitLayer::new(max_body_size));
+        .layer(referrer_policy_layer());
 
     let listener = TcpListener::bind(&bind_address).await.unwrap_or_else(|e| {
         error!("Failed to bind to address {}: {}", bind_address, e);
@@ -248,7 +311,9 @@ async fn main() {
 
     info!("Server running on http://{}", bind_address);
 
-    let health_check_db = db_service;
+    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<&'static str>();
+
+    let health_check_db = db_service.clone();
     tokio::spawn(async move {
         let mut consecutive_failures = 0;
         const MAX_CONSECUTIVE_FAILURES: u32 = 3;
@@ -275,20 +340,54 @@ async fn main() {
                             "Database connection lost after {} consecutive failures, shutting down",
                             MAX_CONSECUTIVE_FAILURES
                         );
-                        std::process::exit(1);
+                        let _ = shutdown_tx.send("database unhealthy");
+                        return;
                     }
                 }
             }
         }
     });
 
-    if let Err(e) = axum::serve(
+    let shutdown_signal = async move {
+        let ctrl_c = async {
+            let _ = tokio::signal::ctrl_c().await;
+            "ctrl-c"
+        };
+        #[cfg(unix)]
+        let terminate = async {
+            use tokio::signal::unix::{SignalKind, signal};
+            if let Ok(mut sig) = signal(SignalKind::terminate()) {
+                sig.recv().await;
+            } else {
+                std::future::pending::<()>().await;
+            }
+            "SIGTERM"
+        };
+        #[cfg(not(unix))]
+        let terminate = std::future::pending::<&'static str>();
+
+        let reason = tokio::select! {
+            r = ctrl_c => r,
+            r = terminate => r,
+            r = shutdown_rx => r.unwrap_or("shutdown channel closed"),
+        };
+        info!("Shutdown signal received: {}; draining in-flight requests", reason);
+    };
+
+    let serve_result = axum::serve(
         listener,
         app.into_make_service_with_connect_info::<SocketAddr>(),
     )
-    .await
-    {
-        error!("Server failed to start: {}", e);
-        std::process::exit(1);
+    .with_graceful_shutdown(shutdown_signal)
+    .await;
+
+    match serve_result {
+        Ok(()) => {
+            info!("Server shut down cleanly");
+        }
+        Err(e) => {
+            error!("Server failed: {}", e);
+            std::process::exit(1);
+        }
     }
 }

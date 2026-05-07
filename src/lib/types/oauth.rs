@@ -9,6 +9,10 @@ pub struct OAuthCallback {
 #[derive(Deserialize)]
 pub struct DiscordAccessTokenResult {
     pub access_token: String,
+    #[serde(default)]
+    pub scope: String,
+    #[serde(default)]
+    pub token_type: String,
 }
 
 #[derive(Deserialize)]

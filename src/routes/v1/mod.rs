@@ -9,8 +9,8 @@ pub mod settings;
 
 pub fn register() -> Router {
     let public_routes = Router::new()
-        .route("/v1", get(delete::get_user_info))
-        .route("/v1/", get(delete::get_user_info))
+        .route("/v1", get(delete::v1_status_pong))
+        .route("/v1/", get(delete::v1_status_pong))
         .route("/v1/oauth/callback", get(oauth::callback::oauth_callback))
         .route("/v1/oauth/settings", get(oauth::settings::oauth_settings));
 
