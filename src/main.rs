@@ -1,3 +1,4 @@
+use axum::Router;
 use axum::extract::DefaultBodyLimit;
 use axum::http::HeaderValue;
 use dotenv::dotenv;
@@ -204,8 +205,34 @@ async fn main() {
 
     let max_body_size = CONFIG.max_backup_size_bytes + 4096;
 
-    let app = routes::register_routes()
-        .layer(axum::extract::Extension(db_service.clone()))
+    let internal_routes = Router::new()
+        .merge(routes::health::register())
+        .merge(routes::metrics::register())
+        .layer(axum::extract::Extension(db_service.clone()));
+
+    let api_routes = Router::new()
+        .merge(routes::v1::register())
+        .merge(routes::v2::register())
+        .layer(axum::extract::Extension(db_service.clone()));
+
+    let api_routes = match (rate_limit_enabled, trust_proxy_headers) {
+        (true, true) => {
+            info!("Rate limiting enabled (trusting proxy headers)");
+            api_routes.layer(configure_rate_limiter_proxy())
+        }
+        (true, false) => {
+            info!("Rate limiting enabled (using peer IP)");
+            api_routes.layer(configure_rate_limiter_peer())
+        }
+        (false, _) => {
+            warn!("Rate limiting disabled");
+            api_routes
+        }
+    };
+
+    let app = Router::new()
+        .merge(internal_routes)
+        .merge(api_routes)
         .layer(cors)
         .layer(security_headers_layer())
         .layer(frame_options_layer())
@@ -213,21 +240,6 @@ async fn main() {
         .layer(referrer_policy_layer())
         .layer(DefaultBodyLimit::disable())
         .layer(RequestBodyLimitLayer::new(max_body_size));
-
-    let app = match (rate_limit_enabled, trust_proxy_headers) {
-        (true, true) => {
-            info!("Rate limiting enabled (trusting proxy headers)");
-            app.layer(configure_rate_limiter_proxy())
-        }
-        (true, false) => {
-            info!("Rate limiting enabled (using peer IP)");
-            app.layer(configure_rate_limiter_peer())
-        }
-        (false, _) => {
-            warn!("Rate limiting disabled");
-            app
-        }
-    };
 
     let listener = TcpListener::bind(&bind_address).await.unwrap_or_else(|e| {
         error!("Failed to bind to address {}: {}", bind_address, e);

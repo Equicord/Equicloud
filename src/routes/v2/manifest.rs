@@ -1,9 +1,9 @@
 use axum::{Extension, Json, http::StatusCode, response::IntoResponse};
 use tracing::error;
 
+use equicloud::DatabaseService;
 use equicloud::types::{DataManifestEntry, ManifestResponse};
 use equicloud::utils::CONFIG;
-use equicloud::DatabaseService;
 
 pub async fn get_manifest(
     Extension(db): Extension<DatabaseService>,
