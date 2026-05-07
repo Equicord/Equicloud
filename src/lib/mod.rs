@@ -12,7 +12,6 @@ use std::time::Duration;
 
 pub mod constants;
 pub mod database;
-pub mod hash_migration;
 pub mod migrations;
 pub mod types;
 pub mod utils;

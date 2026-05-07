@@ -3,15 +3,21 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
 use crate::constants::{CHECKSUM_BYTES, MAX_DECOMPRESSION_SIZE, MAX_KEY_NAME_LEN};
-use crate::hash_migration::sha256;
 use crate::types::{Config, KeyValidationError};
 
 pub fn hash_user_id(user_id: &str) -> String {
-    sha256::hash_user_id(user_id)
+    let mut hasher = Sha256::new();
+    hasher.update(user_id.as_bytes());
+    let result = hasher.finalize();
+    format!("settings:{}", hex::encode(&result[..8]))
 }
 
 pub fn get_user_secret(user_id: &str) -> String {
-    sha256::get_user_secret(user_id)
+    let mut hasher = Sha256::new();
+    hasher.update(b"secret:");
+    hasher.update(user_id.as_bytes());
+    let result = hasher.finalize();
+    hex::encode(&result[..16])
 }
 
 pub fn compute_checksum(data: &[u8]) -> String {

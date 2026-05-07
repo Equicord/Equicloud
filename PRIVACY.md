@@ -46,7 +46,6 @@ EquiCloud is a privacy-focused settings backup service that allows users to stor
 
 ### System Logging
 - **Authentication Events**: Log Discord user IDs when users authenticate (for security auditing)
-- **Migration Events**: Log user IDs during security upgrades (CRC32 to SHA-256 migration)
 - **Error Handling**: Log generic error messages without sensitive data
 - **Log Level**: Configurable via `RUST_LOG` environment variable (default: info)
 
@@ -80,17 +79,12 @@ EquiCloud is a privacy-focused settings backup service that allows users to stor
 - **CORS Protection**: Configurable allowed origins for cross-origin requests
 - **No Cookies**: Application does not use cookies
 
-### Legacy Migration
-- **Security Upgrade**: Migrating from legacy CRC32 hashing to SHA-256 for improved security
-- **Automatic Migration**: Old data is automatically upgraded on first access
-- **Cleanup**: Legacy data is deleted after successful migration
-
 ### Data Retention
 - **Settings**: Stored indefinitely until you delete them
 - **Deletion Options**:
   - `DELETE /v1/settings`: Remove settings only (keep account)
   - `DELETE /v1`: Remove all data including account
-- **Immediate Deletion**: Data is deleted immediately upon request (both current and legacy formats)
+- **Immediate Deletion**: Data is deleted immediately upon request
 - **No Backups**: Once deleted, data cannot be recovered
 - **Logs**: Retention depends on server configuration (not defined by application)
 

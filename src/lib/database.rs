@@ -1,4 +1,3 @@
-use crate::hash_migration::legacy;
 use crate::types::{DataEntry, DataManifestEntry};
 use crate::utils::{CONFIG, compress, decompress, hash_user_id, validate_key};
 use anyhow::Result;
@@ -6,19 +5,9 @@ use futures::{future::join_all, join};
 use scylla::client::session::Session;
 use scylla::statement::prepared::PreparedStatement;
 use std::sync::Arc;
-use tracing::{info, warn};
 
 fn check_key(key: &str) -> Result<()> {
     validate_key(key).map_err(|e| anyhow::anyhow!(e.message()))
-}
-
-fn get_legacy_key_if_different(user_id: &str, new_key: &str) -> Option<String> {
-    let legacy_key = legacy::hash_user_id(user_id);
-    if legacy_key != new_key {
-        Some(legacy_key)
-    } else {
-        None
-    }
 }
 
 struct PreparedStatements {
@@ -26,7 +15,6 @@ struct PreparedStatements {
     get_user_settings: PreparedStatement,
     insert_user_settings: PreparedStatement,
     delete_user: PreparedStatement,
-    get_user_created_at: PreparedStatement,
     get_data_manifest: PreparedStatement,
     get_data_key: PreparedStatement,
     get_data_version: PreparedStatement,
@@ -61,9 +49,6 @@ impl DatabaseService {
                 .await?,
             delete_user: session
                 .prepare("DELETE FROM users WHERE id = ?")
-                .await?,
-            get_user_created_at: session
-                .prepare("SELECT created_at FROM users WHERE id = ?")
                 .await?,
             get_data_manifest: session
                 .prepare("SELECT key, version, checksum, size_bytes, updated_at FROM data WHERE user_id = ?")
@@ -121,13 +106,6 @@ impl DatabaseService {
             return Ok(Some(updated_at.to_string()));
         }
 
-        if let Some(legacy_key) = get_legacy_key_if_different(user_id, &hash_key)
-            && let Some(updated_at) = self.query_updated_at(&legacy_key).await?
-        {
-            warn!("Found legacy data for user, will migrate on next write");
-            return Ok(Some(updated_at.to_string()));
-        }
-
         Ok(None)
     }
 
@@ -148,24 +126,6 @@ impl DatabaseService {
         let hash_key = hash_user_id(user_id);
 
         if let Some((settings, updated_at)) = self.query_settings(&hash_key).await? {
-            return Ok(Some((settings, updated_at.to_string())));
-        }
-
-        if let Some(legacy_key) = get_legacy_key_if_different(user_id, &hash_key)
-            && let Some((settings, updated_at)) = self.query_settings(&legacy_key).await?
-        {
-            info!(
-                "Found legacy settings for user {}, migrating to new hash format",
-                user_id
-            );
-
-            if let Err(e) = self
-                .migrate_user_data(user_id, &legacy_key, &hash_key, &settings, updated_at)
-                .await
-            {
-                warn!("Failed to migrate user data: {}", e);
-            }
-
             return Ok(Some((settings, updated_at.to_string())));
         }
 
@@ -196,8 +156,6 @@ impl DatabaseService {
             )
             .await?;
 
-        self.cleanup_legacy_data(user_id, &hash_key).await;
-
         Ok(now)
     }
 
@@ -208,59 +166,6 @@ impl DatabaseService {
             .execute_unpaged(&self.prepared.delete_user, (&hash_key,))
             .await?;
 
-        self.cleanup_legacy_data(user_id, &hash_key).await;
-
-        Ok(())
-    }
-
-    async fn cleanup_legacy_data(&self, user_id: &str, new_key: &str) {
-        if let Some(legacy_key) = get_legacy_key_if_different(user_id, new_key)
-            && let Err(e) = self.delete_legacy_data(&legacy_key).await
-        {
-            warn!("Failed to clean up legacy data: {}", e);
-        }
-    }
-
-    async fn migrate_user_data(
-        &self,
-        user_id: &str,
-        legacy_key: &str,
-        new_key: &str,
-        settings: &[u8],
-        updated_at: i64,
-    ) -> Result<()> {
-        info!("Migrating user {} from legacy hash to SHA-256", user_id);
-
-        let result = self
-            .session
-            .execute_unpaged(&self.prepared.get_user_created_at, (legacy_key,))
-            .await?;
-        let rows_result = result.into_rows_result()?;
-
-        let created_at = rows_result
-            .rows::<(i64,)>()?
-            .next()
-            .transpose()?
-            .map(|row| row.0)
-            .unwrap_or(updated_at);
-
-        self.session
-            .execute_unpaged(
-                &self.prepared.insert_user_settings,
-                (new_key, settings, created_at, updated_at),
-            )
-            .await?;
-
-        self.delete_legacy_data(legacy_key).await?;
-
-        info!("Successfully migrated user {}", user_id);
-        Ok(())
-    }
-
-    async fn delete_legacy_data(&self, legacy_key: &str) -> Result<()> {
-        self.session
-            .execute_unpaged(&self.prepared.delete_user, (legacy_key,))
-            .await?;
         Ok(())
     }
 
