@@ -14,8 +14,7 @@ const SCHEMA_MIGRATIONS_DDL: &str = "CREATE TABLE IF NOT EXISTS equicloud.schema
      checksum TEXT, \
      applied_at BIGINT)";
 
-const DEFAULT_KEYSPACE_REPLICATION: &str =
-    "{'class': 'SimpleStrategy', 'replication_factor': 1}";
+const DEFAULT_KEYSPACE_REPLICATION: &str = "{'class': 'SimpleStrategy', 'replication_factor': 1}";
 
 pub struct MigrationRunner<'a> {
     session: &'a Session,

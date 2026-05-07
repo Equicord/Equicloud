@@ -371,7 +371,10 @@ async fn main() {
             r = terminate => r,
             r = shutdown_rx => r.unwrap_or("shutdown channel closed"),
         };
-        info!("Shutdown signal received: {}; draining in-flight requests", reason);
+        info!(
+            "Shutdown signal received: {}; draining in-flight requests",
+            reason
+        );
     };
 
     let serve_result = axum::serve(

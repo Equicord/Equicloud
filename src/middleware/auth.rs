@@ -75,7 +75,9 @@ pub async fn auth_middleware(mut request: Request, next: Next) -> Response {
 
     // Cache lookup borrows the &str without allocating.
     if let Some(user_id) = AUTH_CACHE.get(token).await {
-        request.extensions_mut().insert(user_id.as_ref().to_string());
+        request
+            .extensions_mut()
+            .insert(user_id.as_ref().to_string());
         return next.run(request).await;
     }
 
@@ -87,7 +89,9 @@ pub async fn auth_middleware(mut request: Request, next: Next) -> Response {
         Some(user_id) => {
             let token_arc: Arc<str> = Arc::from(token);
             AUTH_CACHE.insert(token_arc, Arc::clone(&user_id)).await;
-            request.extensions_mut().insert(user_id.as_ref().to_string());
+            request
+                .extensions_mut()
+                .insert(user_id.as_ref().to_string());
             next.run(request).await
         }
         None => unauthorized(),

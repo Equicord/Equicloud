@@ -47,10 +47,7 @@ pub async fn create_database_connection() -> Result<Session> {
     // falls back to the contact-point DC) but multi-DC deployments should
     // set this to avoid surprise cross-DC routing.
     let lb_builder = DefaultPolicy::builder().permit_dc_failover(false);
-    let load_balancing = match env::var("SCYLLA_LOCAL_DC")
-        .ok()
-        .filter(|s| !s.is_empty())
-    {
+    let load_balancing = match env::var("SCYLLA_LOCAL_DC").ok().filter(|s| !s.is_empty()) {
         Some(dc) => lb_builder.prefer_datacenter(dc).build(),
         None => lb_builder.build(),
     };

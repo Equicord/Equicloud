@@ -335,10 +335,7 @@ impl DatabaseService {
         batch.append_statement(self.prepared.delete_auth.clone());
 
         self.session
-            .batch(
-                &batch,
-                ((&hash_key,), (&hash_key,), (&hash_key,)),
-            )
+            .batch(&batch, ((&hash_key,), (&hash_key,), (&hash_key,)))
             .await?;
         Ok(())
     }
@@ -703,10 +700,7 @@ impl DatabaseService {
             let version_future = async {
                 let result = self
                     .session
-                    .execute_unpaged(
-                        &self.prepared.get_data_version_and_size,
-                        (&hash_key, key),
-                    )
+                    .execute_unpaged(&self.prepared.get_data_version_and_size, (&hash_key, key))
                     .await?;
                 let rows_result = result.into_rows_result()?;
                 Ok::<Option<(i64, i32)>, anyhow::Error>(

@@ -22,10 +22,7 @@ pub fn hash_user_id(user_id: &str) -> String {
     let digest = hasher.finalize();
     // Single allocation instead of `format!` + `hex::encode` (two allocs).
     let prefix_bytes: [u8; 8] = digest[..8].try_into().unwrap();
-    format!(
-        "settings:{:016x}",
-        u64::from_be_bytes(prefix_bytes)
-    )
+    format!("settings:{:016x}", u64::from_be_bytes(prefix_bytes))
 }
 
 pub fn compute_checksum(data: &[u8]) -> String {
@@ -131,7 +128,10 @@ pub fn validate_key(key: &str) -> Result<(), KeyValidationError> {
     // Reject any path segment that consists only of dots or that starts with a
     // dot — `dataStore/.foo`, `foo/.`, `foo/.bar` could otherwise be treated as
     // hidden / parent-dir markers by downstream filesystem-aware consumers.
-    if key.split('/').any(|seg| seg.is_empty() || seg.starts_with('.')) {
+    if key
+        .split('/')
+        .any(|seg| seg.is_empty() || seg.starts_with('.'))
+    {
         return Err(KeyValidationError::InvalidChars);
     }
     Ok(())

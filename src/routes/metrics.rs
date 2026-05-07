@@ -150,10 +150,7 @@ async fn get_cached_user_counts(db: &DatabaseService, now: u64) -> UserCounts {
 
     let (cached_counts, age) = {
         let cached = cache.lock().await;
-        (
-            cached.counts.clone(),
-            now.saturating_sub(cached.fetched_at),
-        )
+        (cached.counts.clone(), now.saturating_sub(cached.fetched_at))
     };
 
     if age < CACHE_TTL_SECS {

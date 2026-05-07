@@ -157,7 +157,10 @@ pub async fn put_data(
             Ok(c) => c,
             Err(e) => {
                 error!("checksum task panicked: {}", e);
-                return err(StatusCode::INTERNAL_SERVER_ERROR, "Failed to compute checksum");
+                return err(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "Failed to compute checksum",
+                );
             }
         }
     } else {
